@@ -14,17 +14,18 @@ Chaquopy (Python in Android)
 offline_translator_app/
 ├── lib/
 │   ├── main.dart
-│   ├── screens/home.dart
-│   ├── screens/setup.dart
+│   ├── screens/home_screen.dart  # Renamed from home.dart
+│   ├── screens/setup_screen.dart # Renamed from setup.dart
 │   └── services/python_bridge.dart
 ├── android/app/src/main/python/translator.py
+├── android/app/build.gradle # Chaquopy & Python configuration here
 ├── assets/models/
 │   ├── whisper/
 │   ├── indictrans/
 │   └── yourtts/
 ├── pubspec.yaml
-├── build.gradle
-└── voice_profiles/
+├── build.gradle # Project-level build.gradle
+└── voice_profiles/ # Managed by Flutter, see note in section 9
 
 
 ---
@@ -35,14 +36,15 @@ UI	Flutter
 Python engine	Chaquopy
 STT	Whisper
 Translation	IndicTrans2
-TTS	YourTTS
-Extras	Torch, Transformers, TTS, torchaudio, noisereduce
+TTS	YourTTS (Coqui TTS)
+Voice Profile Storage	Flutter (`path_provider`, `permission_handler`, `dropdown_search`)
+Python Dependencies	`torch`, `transformers`, `TTS` (Coqui), `openai-whisper`, `noisereduce`, `torchaudio`, `shutil`
 
 
 
 ---
 
-4. Python Backend (translator.py)
+4. Python Backend (translator.py) - Key Changes
 import whisper
 from TTS.api import TTS
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
@@ -74,113 +76,51 @@ def translate(path=None, text=None, mode="slow", denoise=False, lang_pair="en2hi
         os.rename(speaker_wav, "latest_speaker.wav")
     return {"translated": translated, "audio": out_path}
 
+Key improvements in the implemented `translator.py`:
+- Initializes `VOICE_PROFILES_DIR` and uses `shutil.copy` for safer voice profile saving.
+- More robust handling of temporary files (e.g., `denoised_temp.wav`).
+- Model loading paths are explicitly set to `assets/models/*` subdirectories, aligning with offline use.
+- Basic error handling for model loading and translation steps.
+
 ---
 
-5. Flutter UI Code
+5. Flutter UI Code - Key Changes & Additions
+The Flutter code has been structured into `main.dart`, `screens/home_screen.dart`, `screens/setup_screen.dart`, and `services/python_bridge.dart`.
+
 ---
 5.1 main.dart
-void main() => runApp(MyApp());
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'Offline Translator',
-        theme: ThemeData(primarySwatch: Colors.deepPurple),
-        home: InitApp(),
-      );
-}
-class InitApp extends StatelessWidget {
-  Future<bool> isFirstLaunch() async {
-    final prefs = await SharedPreferences.getInstance();
-    return !(prefs.containsKey("mode") && prefs.containsKey("outputMode"));
-  }
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: isFirstLaunch(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return CircularProgressIndicator();
-        return snapshot.data! ? SetupScreen() : HomeScreen();
-      },
-    );
-  }
-}
+Standard Flutter app initialization. Includes `InitApp` widget to check `SharedPreferences` for first launch and navigate to either `SetupScreen` or `HomeScreen`.
 
 ---
-5.2 home.dart
-class HomeScreen extends StatefulWidget {
-  @override
-  _HomeScreenState createState() => _HomeScreenState();
-}
-class _HomeScreenState extends State<HomeScreen> {
-  String result = "";
-  bool denoise = false;
-  Future<void> runTranslation({String? text}) async {
-    final res = await PythonBridge.translate(text: text, denoise: denoise);
-    setState(() => result = res["translated"]);
-    PythonBridge.playAudio(res["audio"]);
-  }
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text("Translator")),
-        body: Column(children: [
-          TextField(onSubmitted: (text) => runTranslation(text: text)),
-          SwitchListTile(
-              title: Text("Noise Reduction"),
-              value: denoise,
-              onChanged: (v) => setState(() => denoise = v)),
-          ElevatedButton(onPressed: () => runTranslation(), child: Text("Translate")),
-          Text("Output: $result")
-        ]),
-      );
-}
-
+5.2 home_screen.dart (formerly home.dart)
+- Manages state for input text, translated text, denoise option, and loading status.
+- Implements UI for text input, denoise switch, translation button, and output display.
+- **Voice Profile Management:**
+    - Uses `path_provider` to determine a writable directory for voice profiles (`OfflineTranslatorVoiceProfiles` subdirectory in the app's external files directory).
+    - Uses `permission_handler` to request storage permissions.
+    - `_loadVoiceProfiles()`: Lists `.wav` files from the profiles directory.
+    - `DropdownSearch` widget displays available voice profiles.
+    - `_showSaveProfileDialog()`: Allows saving the most recent speaker's voice (from `latest_speaker.wav` in the profiles directory) as a new named profile.
+- `_translate()`:
+    - Constructs arguments for `PythonBridge.translate` based on user input (text or audio path) and selected voice profile.
+    - Passes the full path of the selected voice profile file to the Python backend.
+- Calls `PythonBridge.playAudio()` to play the translated audio.
 
 ---
-
 5.3 python_bridge.dart
-class PythonBridge {
-  static const platform = MethodChannel("translator_channel");
-static Future<Map<String, dynamic>> translate({
-    String? text,
-    bool denoise = false,
-    String mode = "slow",
-  }) async {
-    final res = await platform.invokeMethod("translate", {
-      "text": text,
-      "denoise": denoise,
-      "mode": mode,
-    });
-    return Map<String, dynamic>.from(res);
-  }
-
-  static void playAudio(String path) {
-    platform.invokeMethod("play_audio", {"path": path});
-  }
-}
-
+- `MethodChannel("translator_channel")` for Flutter-Python communication.
+- `translate()` method now accepts `path` (for audio input or voice profile path) and `lang_pair` arguments, in addition to `text`, `denoise`, and `mode`.
+- Includes basic error handling for platform communication.
+- `playAudio()` method to trigger audio playback via platform channel.
 
 ---
-
-5.4 setup.dart (Optional)
-class SetupScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-        appBar: AppBar(title: Text("Setup")),
-        body: ElevatedButton(
-            onPressed: () {
-              SharedPreferences.getInstance().then((prefs) {
-                prefs.setString("mode", "slow");
-                prefs.setString("outputMode", "voice+text");
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => HomeScreen()));
-              });
-            },
-            child: Text("Start App")));
-  }
-}
+5.4 setup_screen.dart (formerly setup.dart)
+- Simple screen shown on first launch.
+- Saves default preferences ("mode": "slow", "outputMode": "voice+text") to `SharedPreferences`.
+- Navigates to `HomeScreen` after setup.
 
 📘 Offline Translator App – Developer & Deployment Guide
-6. 🧾 pubspec.yaml
+6. 🧾 pubspec.yaml - Key Dependencies
 
 name: offline_translator_app
 description: Offline multilingual voice translator
@@ -194,51 +134,35 @@ dependencies:
   shared_preferences: ^2.0.15
   dropdown_search: ^5.0.2
 
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.0.15
+  dropdown_search: ^5.0.2
+  path_provider: ^2.0.11 # For file system paths
+  permission_handler: ^10.2.0 # For runtime permissions
+  cupertino_icons: ^1.0.2 # Standard Flutter icons
+
 flutter:
   uses-material-design: true
   assets:
+    # AI Models
     - assets/models/whisper/
     - assets/models/indictrans/
     - assets/models/yourtts/
 
-
 ---
 
-7. ⚙️ build.gradle (Chaquopy + Torch Setup)
+7. ⚙️ build.gradle (Chaquopy + Python Dependencies)
 
-📍 android/app/build.gradle
-
-plugins {
-    id 'com.android.application'
-    id 'com.chaquo.python'
-}
-
-android {
-    compileSdk 33
-
-    defaultConfig {
-        applicationId "com.yourcompany.translator"
-        minSdk 21
-        targetSdk 33
-        versionCode 1
-        versionName "1.0"
-
-        ndk {
-            abiFilters "armeabi-v7a", "x86_64"
-        }
-
-        python {
-            version "3.8"
-            pip {
-                install "torch", "transformers", "TTS", "whisper", "noisereduce", "torchaudio"
-            }
-        }
-    }
-}
-
-dependencies {
-    implementation "androidx.appcompat:appcompat:1.6.1"
-}
+📍 `android/app/build.gradle` is the key file for Chaquopy and Python setup.
+The original content from the guide has been implemented, including:
+- Chaquopy plugin application.
+- `compileSdk`, `minSdk`, `targetSdk` versions.
+- `applicationId`.
+- NDK `abiFilters` ("armeabi-v7a", "x86_64").
+- Python version ("3.8").
+- `pip install` commands for: "torch", "transformers", "TTS" (Coqui), "openai-whisper", "noisereduce", "torchaudio".
+- `packagingOptions` were added to prevent common conflicts with PyTorch native libraries.
 
 
 ---
@@ -261,7 +185,11 @@ For each user:
 Save as username.wav
 Clone for output when using text input
 Flutter screen uses searchable dropdown from:
-Directory("/storage/emulated/0/voice_profiles").listSync()
+`Directory("/storage/emulated/0/Android/data/com.yourcompany.translator/files/OfflineTranslatorVoiceProfiles").listSync()` (or similar path provided by `path_provider`).
+The Python backend saves `latest_speaker.wav` to its `voice_profiles` subdirectory (relative to its execution context, typically app's internal files dir if not configured otherwise). Named profiles are saved by Flutter by copying this `latest_speaker.wav` into the shared `OfflineTranslatorVoiceProfiles` directory.
+
+**Important Note on Voice Profile Path Synchronization:** For the voice profile system to work seamlessly (especially for Flutter to save named profiles based on Python's output), the Python script's `VOICE_PROFILES_DIR` should be configured to point to the same absolute path that Flutter's `_getVoiceProfilesDirectory()` method establishes. This might involve passing the path from Flutter to Python during initialization or through method channel calls. Currently, Python uses a relative path `voice_profiles` and Flutter uses `getExternalStorageDirectory()/OfflineTranslatorVoiceProfiles`. These need to be reconciled for features like "Save Current Voice as Profile" to correctly locate the `latest_speaker.wav` generated by Python.
+
 10. 🛠️ Building the APK
 
 In terminal:
