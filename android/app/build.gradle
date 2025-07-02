@@ -1,0 +1,112 @@
+//groovy
+plugins {
+    id "com.android.application"
+    id "kotlin-android" // Assuming Kotlin is used, common for new Flutter projects
+    id "dev.flutter.flutter-gradle-plugin" // Changed from com.android.application to new flutter plugin
+    id "com.chaquo.python"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+android {
+    // namespace "com.yourcompany.translator" // Set your namespace
+    compileSdk 33 // From README
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.yourcompany.translator" // From README
+        minSdk 21 // From README - Flutter default is often higher, ensure compatibility
+        targetSdk 33 // From README
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+
+        ndk {
+            // Chaquopy recommended ABIs. README has "armeabi-v7a", "x86_64".
+            // Adding arm64-v8a and x86 is common for wider support.
+            // Matched with README for this task.
+            abiFilters "armeabi-v7a", "x86_64"
+        }
+
+        python {
+            // Version can be "3.8", "3.9", "3.10", "3.11" etc. depending on Chaquopy version support
+            version "3.8" // From README
+
+            pip {
+                // Dependencies from README
+                install "torch"
+                install "transformers"
+                install "TTS" // Ensure correct package name for Coqui TTS
+                install "whisper" // Ensure correct package name (e.g., openai-whisper)
+                install "noisereduce"
+                install "torchaudio"
+                // Consider version pinning for reproducibility, e.g., "torch==1.13.1"
+            }
+            // Optional: Specify buildPython for native modules if needed
+            // buildPython "path/to/your/python"
+        }
+    }
+
+    buildTypes {
+        release {
+            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            signingConfig signingConfigs.debug // Replace with your release signing config
+            // Consider enabling ProGuard/R8 for code shrinking and obfuscation
+            // minifyEnabled false
+            // shrinkResources false
+            // proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    // Chaquopy requires Java 8 compatibility
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+     packagingOptions { // Added to prevent conflicts with torch
+        exclude "lib/x86_64/libopenblas.so"
+        exclude "lib/x86_64/libprotobuf.so"
+        exclude "lib/x86_64/libprotobuf-lite.so"
+        exclude "lib/arm64-v8a/libopenblas.so"
+        exclude "lib/arm64-v8a/libprotobuf.so"
+        exclude "lib/arm64-v8a/libprotobuf-lite.so"
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version" // Use appropriate Kotlin version
+    implementation "androidx.appcompat:appcompat:1.6.1" // From README
+    // Add other standard Android dependencies if needed
+    // implementation 'androidx.core:core-ktx:1.9.0'
+    // implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.5.1'
+}
+
+// Apply Chaquopy plugin if not already at the top by id
+// apply plugin: 'com.chaquo.python'
